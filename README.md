@@ -1,5 +1,7 @@
 # 小爱记账（AstrBot 插件）
 
+> 记账项目本体（源码 / Releases 下载）：https://github.com/feng20010612-glitch/xiaoai-ledger
+
 让 QQ 也能记账：聊天里随手记一笔，详细数据回到记账本网页里看。
 插件只调用记账本**现成的 HTTP 接口**，不修改记账本、不写它的任何文件。
 
