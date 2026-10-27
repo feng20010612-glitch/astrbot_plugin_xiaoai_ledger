@@ -1,6 +1,6 @@
 name: astrbot_plugin_xiaoai_ledger
 display_name: 小爱记账
 desc: QQ 里记账、查账、改账、回收站恢复，月度统计与预算提醒，到期前提醒待还账单；也能就地安装/升级记账本。配套记账项目（源码与下载）：https://github.com/feng20010612-glitch/xiaoai-ledger
-version: "1.7.2"
+version: "1.7.3"
 author: 小爱 & feng20010612-glitch
 repo: https://github.com/feng20010612-glitch/astrbot_plugin_xiaoai_ledger
