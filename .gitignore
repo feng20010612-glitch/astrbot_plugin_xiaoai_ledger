@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.log
+_launcher_error.log
+app_state.json
+ledger_app/
+.venv/
