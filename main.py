@@ -179,7 +179,7 @@ def calc_net_expense(recs, id_map) -> float:
     "astrbot_plugin_xiaoai_ledger",
     "小爱",
     "通过小爱记账的 HTTP 接口在 QQ 里记账、查账、看月度统计（不改动记账本本身）",
-    "1.7.0",
+    "1.7.1",
 )
 class XiaoaiLedgerPlugin(Star):
     def __init__(self, context: Context, config=None):
@@ -329,6 +329,83 @@ class XiaoaiLedgerPlugin(Star):
         return False
 
     # ───────────────────────── 程序安装状态 ─────────────────────────
+    # ───────────────────────── skill 同步 ─────────────────────────
+    SKILL_NAME = "xiaoai-ledger"
+    SKILL_MARK = "managed-by: astrbot_plugin_xiaoai_ledger"
+
+    def _skills_dir(self) -> str:
+        """插件位于 <AstrBot>/data/plugins/<插件名>，skills 在 <AstrBot>/data/skills。
+
+        只有确认身处 plugins 目录下才返回路径，避免在别处跑测试时污染无关目录。
+        """
+        here = os.path.dirname(os.path.abspath(__file__))
+        plugins_dir = os.path.dirname(here)
+        if os.path.basename(plugins_dir).lower() != "plugins":
+            return ""
+        return os.path.join(os.path.dirname(plugins_dir), "skills")
+
+    def _sync_skill(self):
+        """把插件自带的 SKILL.md 复制到 data/skills/，返回 (状态, 目标路径)。"""
+        src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "SKILL.md")
+        if not os.path.isfile(src):
+            return "missing-source", ""
+        skills_dir = self._skills_dir()
+        if not skills_dir:
+            return "bad-layout", ""
+        target_dir = os.path.join(skills_dir, self.SKILL_NAME)
+        target = os.path.join(target_dir, "SKILL.md")
+        try:
+            body = io.open(src, encoding="utf-8").read()
+        except Exception as exc:
+            logger.warning("[xiaoai_ledger] 读取 SKILL.md 失败: %s", exc)
+            return "read-error", target
+        marker = "<!-- " + self.SKILL_MARK + " -->"
+        payload = body.rstrip() + chr(10) + chr(10) + marker + chr(10)
+        old = ""
+        if os.path.isfile(target):
+            try:
+                old = io.open(target, encoding="utf-8").read()
+            except Exception:
+                old = ""
+        if old == payload:
+            return "unchanged", target
+        if old and self.SKILL_MARK not in old:
+            logger.warning("[xiaoai_ledger] %s 已存在且不是本插件投放的，跳过覆盖", target)
+            return "skipped-user-file", target
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            with io.open(target, "w", encoding="utf-8", newline=chr(10)) as f:
+                f.write(payload)
+            logger.info("[xiaoai_ledger] 已同步 skill 到 %s", target)
+            return ("updated" if old else "installed"), target
+        except Exception as exc:
+            logger.warning("[xiaoai_ledger] 写入 skill 失败: %s", exc)
+            return "write-error", target
+
+    @filter.command("同步规则")
+    async def cmd_sync_skill(self, event: AstrMessageEvent):
+        deny = self._denied(event)
+        if deny:
+            yield event.plain_result(deny)
+            return
+        status, path = await asyncio.to_thread(self._sync_skill)
+        table = {
+            "installed": "已投放",
+            "updated": "已更新",
+            "unchanged": "已是最新",
+            "skipped-user-file": "目标文件不是本插件投放的，未覆盖",
+            "missing-source": "插件里没有 SKILL.md",
+            "read-error": "读取失败",
+            "write-error": "写入失败",
+            "bad-layout": "插件不在 AstrBot 的 plugins 目录下，跳过投放",
+        }
+        msg = "规则文件：" + table.get(status, status)
+        if path:
+            msg = msg + NL + path
+        if status in ("installed", "updated"):
+            msg = msg + NL + "重启 AstrBot 后生效（skill 在启动时加载）"
+        yield event.plain_result(msg)
+
     def _state_file(self) -> str:
         base = ""
         try:
@@ -898,6 +975,11 @@ class XiaoaiLedgerPlugin(Star):
             await asyncio.sleep(1800)
 
     async def initialize(self) -> None:
+        try:
+            status, path = await asyncio.to_thread(self._sync_skill)
+            logger.info("[xiaoai_ledger] skill 同步: %s -> %s", status, path)
+        except Exception as exc:
+            logger.warning("[xiaoai_ledger] skill 同步异常: %s", exc)
         self._remind_task = asyncio.create_task(self._reminder_loop())
 
     async def terminate(self) -> None:
