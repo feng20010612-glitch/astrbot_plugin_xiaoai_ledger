@@ -157,27 +157,28 @@ QQ 里只做"记账 / 查账 / 月度统计 / 删除"，**详细数据和可视�
 | /类别 | 看看有哪些分类可用 |
 | /账本 | 显示这条帮助 |
 
-## 配置项（自动生成）
+## 配置项
 
-| 配置 | 说明 | 默认 |
-| --- | --- | --- |
-| base_url | 小爱记账的服务地址（默认本机 8899） | http://127.0.0.1:8899 |
-| allow_ids | 允许使用的 QQ 号，多个用逗号分隔；留空表示不限制 |  |
-| only_private | 只在私聊里允许记账/查账 | false |
-| default_category | 猜不到分类时的兜底一级分类 |  |
-| budget_warn_pct | 记完一笔后，本月预算用到这个百分比就提醒（0 表示不提醒） | 80 |
-| remind_enabled | 待还/还款提醒（到期前 lead_days 天推一次，不每天推） | true |
-| lead_days | 提前几天提醒待还账单 | 3 |
-| notify_hour | 每天几点之后可以推提醒（0-23） | 9 |
-| notify_target | 提醒推送到哪个会话（留空=自动用最近一次说话的会话） |  |
-| app_url | 记账程序包下载直链（zip，需 https） |  |
-| app_zip_path | 记账程序包本地路径（zip） |  |
-| auto_start | 连不上时自动启动记账本（不会打开浏览器） | false |
-| exe_path | 记账程序完整路径；留空则用 /账本安装 记住的路径 |  |
-| start_timeout | 自动启动后等待服务就绪的秒数 | 20 |
-| update_url | 记账本升级包下载直链（zip） |  |
-| update_zip_path | 记账本升级包本地路径（zip） |  |
-| allow_restart | 允许插件重启记账本 | false |
+| 分组 | 配置 | 说明 | 默认 |
+| --- | --- | --- | --- |
+| ① 连接记账本 | base_url | 记账本地址 | http://127.0.0.1:8899 |
+| ② 谁可以记账 | allow_ids | 允许使用的 QQ 号 |  |
+|  | only_private | 只在私聊里可用 | false |
+| ③ 记账习惯 | default_category | 猜不到分类时用哪个 |  |
+|  | budget_warn_pct | 预算用到百分之几就提醒 | 80 |
+| ④ 待还提醒 | remind_enabled | 开启待还提醒 | true |
+|  | lead_days | 提前几天提醒 | 3 |
+|  | notify_hour | 每天几点后可推送 | 9 |
+|  | notify_target | 推送到哪个会话 |  |
+| ⑤ 记账程序安装 | app_url | 程序包下载直链（zip） |  |
+|  | app_zip_path | 或用手动放的本地包 |  |
+|  | auto_start | 连不上时自动启动程序 | false |
+|  | exe_path | 程序的完整路径 |  |
+|  | start_timeout | 启动后等几秒 | 20 |
+| ⑥ 升级与重启 | update_url | 升级包下载直链（zip） |  |
+|  | update_zip_path | 或用手动放的升级包 |  |
+|  | allow_restart | 允许插件重启记账本 | false |
+
 
 ## 主动提醒说明
 

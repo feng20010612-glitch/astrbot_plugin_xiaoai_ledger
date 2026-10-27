@@ -179,7 +179,7 @@ def calc_net_expense(recs, id_map) -> float:
     "astrbot_plugin_xiaoai_ledger",
     "小爱",
     "通过小爱记账的 HTTP 接口在 QQ 里记账、查账、看月度统计（不改动记账本本身）",
-    "1.7.3",
+    "1.8.0",
 )
 class XiaoaiLedgerPlugin(Star):
     def __init__(self, context: Context, config=None):
@@ -190,11 +190,19 @@ class XiaoaiLedgerPlugin(Star):
 
     # ───────────────────────── 配置 ─────────────────────────
     def _cfg(self, key, default=""):
+        """配置取值：兼容扁平（旧 schema）与分组嵌套（新 schema）两种结构。"""
         try:
-            v = self.config.get(key, default)
+            cfg = self.config
+            v = cfg.get(key, None)
+            if v is not None:
+                return v
+            for grp in cfg.values():
+                if isinstance(grp, dict) and key in grp:
+                    v = grp.get(key)
+                    return default if v is None else v
         except Exception:
             return default
-        return default if v is None else v
+        return default
 
     def _base(self) -> str:
         return str(self._cfg("base_url", DEFAULT_BASE) or DEFAULT_BASE).rstrip("/")

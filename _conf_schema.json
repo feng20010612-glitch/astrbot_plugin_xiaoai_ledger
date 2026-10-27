@@ -1,87 +1,143 @@
 {
-  "base_url": {
-    "description": "小爱记账的服务地址（默认本机 8899）",
-    "type": "string",
-    "default": "http://127.0.0.1:8899"
+  "connection": {
+    "type": "object",
+    "description": "① 连接记账本",
+    "hint": "插件通过 HTTP 和本机记账本通信，端口没改就不用动这里",
+    "items": {
+      "base_url": {
+        "description": "记账本地址",
+        "type": "string",
+        "default": "http://127.0.0.1:8899",
+        "hint": "一台电脑开多个账本时用不同端口区分，例如测试账本写 8907"
+      }
+    }
   },
-  "allow_ids": {
-    "description": "允许使用的 QQ 号，多个用逗号分隔；留空表示不限制",
-    "type": "string",
-    "default": ""
+  "permission": {
+    "type": "object",
+    "description": "② 谁可以记账",
+    "hint": "建议填自己的 QQ 号，避免别人通过机器人动你的账本",
+    "items": {
+      "allow_ids": {
+        "description": "允许使用的 QQ 号",
+        "type": "string",
+        "default": "",
+        "hint": "多个用逗号分隔；留空表示不限制"
+      },
+      "only_private": {
+        "description": "只在私聊里可用",
+        "type": "bool",
+        "default": false,
+        "hint": "打开后群里发指令会提示改私聊"
+      }
+    }
   },
-  "only_private": {
-    "description": "只在私聊里允许记账/查账",
-    "type": "bool",
-    "default": false
+  "habit": {
+    "type": "object",
+    "description": "③ 记账习惯",
+    "hint": "分类猜测和预算提醒",
+    "items": {
+      "default_category": {
+        "description": "猜不到分类时用哪个",
+        "type": "string",
+        "default": "",
+        "hint": "留空则用记账本里带「其他」字样的分类"
+      },
+      "budget_warn_pct": {
+        "description": "预算用到百分之几就提醒",
+        "type": "int",
+        "default": 80,
+        "hint": "每次记账后检查，0 表示不提醒"
+      }
+    }
   },
-  "default_category": {
-    "description": "猜不到分类时的兜底一级分类",
-    "type": "string",
-    "default": ""
+  "reminder": {
+    "type": "object",
+    "description": "④ 待还提醒",
+    "hint": "到期前提醒，不会每天刷屏",
+    "items": {
+      "remind_enabled": {
+        "description": "开启待还提醒",
+        "type": "bool",
+        "default": true
+      },
+      "lead_days": {
+        "description": "提前几天提醒",
+        "type": "int",
+        "default": 3,
+        "hint": "默认 3 天；同一天只提醒一次"
+      },
+      "notify_hour": {
+        "description": "每天几点后可推送",
+        "type": "int",
+        "default": 9,
+        "hint": "0-23，避免半夜吵人"
+      },
+      "notify_target": {
+        "description": "推送到哪个会话",
+        "type": "string",
+        "default": "",
+        "hint": "留空 = 用最近一次说话的会话"
+      }
+    }
   },
-  "budget_warn_pct": {
-    "description": "记完一笔后，本月预算用到这个百分比就提醒（0 表示不提醒）",
-    "type": "int",
-    "default": 80
+  "app": {
+    "type": "object",
+    "description": "⑤ 记账程序安装",
+    "hint": "插件很小，记账程序按需下载；装好后会自动记住路径",
+    "items": {
+      "app_url": {
+        "description": "程序包下载直链（zip）",
+        "type": "string",
+        "default": "",
+        "hint": "填好后发 /账本安装 就会自动下载并解压"
+      },
+      "app_zip_path": {
+        "description": "或用手动放的本地包",
+        "type": "string",
+        "default": "",
+        "hint": "不想联网时手动放一个 zip，填它的路径"
+      },
+      "auto_start": {
+        "description": "连不上时自动启动程序",
+        "type": "bool",
+        "default": false,
+        "hint": "需要已装好程序（或用下面的 exe_path）；不会弹浏览器"
+      },
+      "exe_path": {
+        "description": "程序的完整路径",
+        "type": "string",
+        "default": "",
+        "hint": "留空则用 /账本安装 记住的路径"
+      },
+      "start_timeout": {
+        "description": "启动后等几秒",
+        "type": "int",
+        "default": 20
+      }
+    }
   },
-  "remind_enabled": {
-    "description": "待还/还款提醒（到期前 lead_days 天推一次，不每天推）",
-    "type": "bool",
-    "default": true
-  },
-  "lead_days": {
-    "description": "提前几天提醒待还账单",
-    "type": "int",
-    "default": 3
-  },
-  "notify_hour": {
-    "description": "每天几点之后可以推提醒（0-23）",
-    "type": "int",
-    "default": 9
-  },
-  "notify_target": {
-    "description": "提醒推送到哪个会话（留空=自动用最近一次说话的会话）",
-    "type": "string",
-    "default": ""
-  },
-  "app_url": {
-    "description": "记账程序包下载直链（zip，需 https）",
-    "type": "string",
-    "default": ""
-  },
-  "app_zip_path": {
-    "description": "记账程序包本地路径（zip）",
-    "type": "string",
-    "default": ""
-  },
-  "auto_start": {
-    "description": "连不上时自动启动记账本（不会打开浏览器）",
-    "type": "bool",
-    "default": false
-  },
-  "exe_path": {
-    "description": "记账程序完整路径；留空则用 /账本安装 记住的路径",
-    "type": "string",
-    "default": ""
-  },
-  "start_timeout": {
-    "description": "自动启动后等待服务就绪的秒数",
-    "type": "int",
-    "default": 20
-  },
-  "update_url": {
-    "description": "记账本升级包下载直链（zip）",
-    "type": "string",
-    "default": ""
-  },
-  "update_zip_path": {
-    "description": "记账本升级包本地路径（zip）",
-    "type": "string",
-    "default": ""
-  },
-  "allow_restart": {
-    "description": "允许插件重启记账本",
-    "type": "bool",
-    "default": false
+  "upgrade": {
+    "type": "object",
+    "description": "⑥ 升级与重启",
+    "hint": "升级包交给记账本自己的升级流程，data 目录不会被覆盖",
+    "items": {
+      "update_url": {
+        "description": "升级包下载直链（zip）",
+        "type": "string",
+        "default": "",
+        "hint": "配置后发 /账本升级 即可用"
+      },
+      "update_zip_path": {
+        "description": "或用手动放的升级包",
+        "type": "string",
+        "default": ""
+      },
+      "allow_restart": {
+        "description": "允许插件重启记账本",
+        "type": "bool",
+        "default": false,
+        "hint": "升级 exe 后必须重启才生效；默认关闭更安全"
+      }
+    }
   }
 }
