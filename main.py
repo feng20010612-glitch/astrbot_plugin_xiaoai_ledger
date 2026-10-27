@@ -179,7 +179,7 @@ def calc_net_expense(recs, id_map) -> float:
     "astrbot_plugin_xiaoai_ledger",
     "小爱",
     "通过小爱记账的 HTTP 接口在 QQ 里记账、查账、看月度统计（不改动记账本本身）",
-    "1.6.1",
+    "1.7.0",
 )
 class XiaoaiLedgerPlugin(Star):
     def __init__(self, context: Context, config=None):
@@ -1018,6 +1018,159 @@ class XiaoaiLedgerPlugin(Star):
             rec.get("id", "?"), str(rec.get("date") or ""),
             str(rec.get("category") or ""), money(rec.get("amount"))))
 
+    # ───────────────────────── 备份与恢复 ─────────────────────────
+    @filter.command("账本备份")
+    async def cmd_backup(self, event: AstrMessageEvent):
+        deny = self._denied(event)
+        if deny:
+            yield event.plain_result(deny)
+            return
+        try:
+            res = await self._call("POST", "/api/backup")
+        except LedgerOffline:
+            yield event.plain_result("连不上记账本喵。")
+            return
+        except LedgerApiError as exc:
+            yield event.plain_result("备份失败：%s" % exc)
+            return
+        name = (res or {}).get("name") or ""
+        msg = "备份好了喵：" + (name if name else "(未返回名字)")
+        if name:
+            msg = msg + NL + "要恢复就发 /账本恢复 " + name + " 确认"
+        yield event.plain_result(msg)
+
+    @filter.command("账本备份列表")
+    async def cmd_backup_list(self, event: AstrMessageEvent):
+        deny = self._denied(event)
+        if deny:
+            yield event.plain_result(deny)
+            return
+        try:
+            res = await self._call("GET", "/api/backups")
+        except LedgerOffline:
+            yield event.plain_result("连不上记账本喵。")
+            return
+        except LedgerApiError as exc:
+            yield event.plain_result("读取失败：%s" % exc)
+            return
+        items = (res or {}).get("backups") or []
+        if not items:
+            yield event.plain_result("还没有备份喵，发 /账本备份 建一份。")
+            return
+        lines = ["最近 %d 份备份：" % min(len(items), 10)]
+        for it in items[:10]:
+            if isinstance(it, dict):
+                nm = it.get("name") or "?"
+                cnt = it.get("count")
+                lines.append("  " + str(nm) + (("（%s 条）" % cnt) if cnt is not None else ""))
+            else:
+                lines.append("  " + str(it))
+        lines.append("恢复：/账本恢复 <名字> 确认")
+        yield event.plain_result(NL.join(lines))
+
+    @filter.command("账本恢复")
+    async def cmd_restore_backup(self, event: AstrMessageEvent):
+        deny = self._denied(event)
+        if deny:
+            yield event.plain_result(deny)
+            return
+        text = self._payload(event, ("账本恢复", "恢复备份")).strip()
+        if not text:
+            yield event.plain_result("用法：/账本恢复 <备份名> 确认" + NL + "先发 /账本备份列表 看有哪些")
+            return
+        if not text.endswith("确认"):
+            tip = "恢复会覆盖当前账本，所以要先确认喵。"
+            tip = tip + NL + "把命令末尾加上「确认」再发一次，例如：/账本恢复 " + text + " 确认"
+            yield event.plain_result(tip)
+            return
+        name = text[:-2].strip()
+        if not name:
+            yield event.plain_result("要写备份名喵，先发 /账本备份列表 看有哪些。")
+            return
+        try:
+            await self._call("POST", "/api/backup")
+        except (LedgerOffline, LedgerApiError):
+            pass
+        try:
+            await self._call("POST", "/api/backup/restore", {"name": name})
+        except LedgerOffline:
+            yield event.plain_result("连不上记账本喵。")
+            return
+        except LedgerApiError as exc:
+            yield event.plain_result("恢复失败：%s" % exc)
+            return
+        done = "已恢复到备份：" + name
+        done = done + NL + "（恢复前已自动给当前状态留了一份）"
+        yield event.plain_result(done)
+
+    # ───────────────────────── 二级分类 ─────────────────────────
+    @filter.command("加二级")
+    async def cmd_add_sub(self, event: AstrMessageEvent):
+        deny = self._denied(event)
+        if deny:
+            yield event.plain_result(deny)
+            return
+        text = self._payload(event, ("加二级", "新增二级")).strip()
+        tokens = text.split()
+        if len(tokens) < 2:
+            yield event.plain_result("用法：/加二级 一级分类 二级名字" + NL + "例如：/加二级 吃喝饮食 下午茶")
+            return
+        cat, sub = tokens[0], " ".join(tokens[1:]).strip()
+        try:
+            st = await self._settings(force=True)
+        except LedgerOffline:
+            yield event.plain_result("连不上记账本喵。")
+            return
+        except LedgerApiError as exc:
+            yield event.plain_result("读取设置失败：%s" % exc)
+            return
+        pools = list(st.get("expenseCats") or []) + list(st.get("incomeCats") or [])
+        if cat not in [str(x) for x in pools]:
+            warn = "「%s」不是记账本里的分类喵，发 /类别 看看。" % cat
+            warn = warn + NL + "插件不会自动建一级分类。"
+            yield event.plain_result(warn)
+            return
+        subs = st.get("subCats") or {}
+        if not isinstance(subs, dict):
+            subs = {}
+        cur = [str(x) for x in (subs.get(cat) or [])]
+        if sub in cur:
+            yield event.plain_result("「%s」下已经有「%s」了喵。" % (cat, sub))
+            return
+        backed = ""
+        try:
+            r = await self._call("POST", "/api/backup")
+            backed = (r or {}).get("name") or ""
+        except (LedgerOffline, LedgerApiError):
+            pass
+        new_subs = dict(subs)
+        new_subs[cat] = cur + [sub]
+        try:
+            await self._call("POST", "/api/settings", {"subCats": new_subs})
+        except LedgerOffline:
+            yield event.plain_result("连不上记账本喵。")
+            return
+        except LedgerApiError as exc:
+            yield event.plain_result("写入失败：%s" % exc)
+            return
+        try:
+            st2 = await self._settings(force=True)
+            got = [str(x) for x in ((st2.get("subCats") or {}).get(cat) or [])]
+        except Exception:
+            got = []
+        if sub not in got:
+            try:
+                await self._call("POST", "/api/settings", {"subCats": subs})
+            except Exception:
+                pass
+            yield event.plain_result("写入后校验没通过，已回滚喵（设置未变）。")
+            return
+        lines = ["已加好：%s → %s" % (cat, sub), "现在 %s 下有：%s" % (cat, "、".join(got))]
+        if backed:
+            lines.append("写前自动备份：%s" % backed)
+            lines.append("不对就发 /账本恢复 %s 确认 回滚" % backed)
+        yield event.plain_result(NL.join(lines))
+
     # ───────────────────────── 状态 ─────────────────────────
     @filter.command("账本状态")
     async def cmd_status(self, event: AstrMessageEvent):
@@ -1621,6 +1774,19 @@ class XiaoaiLedgerPlugin(Star):
         直接把这整段文本原样发出去，不要改写、不要压缩成一行。
         """
         return HELP_TEXT
+
+    @filter.llm_tool(name="ledger_rules")
+    async def tool_rules(self, event: AstrMessageEvent) -> str:
+        """
+        返回小爱记账的计算口径与操作规则（支出/收入/结余/预算怎么算、哪些不能做）。
+        用户问"怎么算的""为什么和网页数字不一样""预算怎么来的""能不能新建分类"时调用。
+        """
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "SKILL.md")
+        try:
+            with io.open(path, encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            return "规则文件缺失；可先看 /帮助，或参考 README 的「计算口径」章节。"
 
     # ───────────────────────── 帮助 ─────────────────────────
     @filter.command("账本", alias={"帮助", "功能", "help"})
