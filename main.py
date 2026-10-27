@@ -91,12 +91,78 @@ def money(n) -> str:
 def today_str() -> str:
     return date.today().strftime("%Y-%m-%d")
 
+# ── 计算口径：与记账本前端保持同源（2026-10-28 按 记账本 v2.15.26 的 CAT_ROLES 移植）──
+CAT_ROLES = {
+    "investIn": ["投资理财", "理财存入", "理财基金"],
+    "investLoss": ["投资亏损", "理财亏损"],
+    "saveIn": ["储蓄存款", "存入存款"],
+    "investWithdraw": ["投资赎回", "理财取出"],
+    "investProfit": ["投资收益", "理财收入", "理财"],
+    "saveOut": ["储蓄取出", "取出存款"],
+    "refund": ["退款"],
+    "salary": ["工资", "奖金"],
+    "badDebt": ["烂账"],
+    "misc": ["其他杂项"],
+}
+
+
+def role_of(cat) -> str:
+    c = "" if cat is None else str(cat)
+    for k, names in CAT_ROLES.items():
+        if c in names:
+            return k
+    return ""
+
+
+def is_non_consume(cat) -> bool:
+    return role_of(cat) in ("investIn", "saveIn")
+
+
+def prev_month(month: str) -> str:
+    y, m = int(month[:4]), int(month[5:7])
+    return "%04d-12" % (y - 1) if m == 1 else "%04d-%02d" % (y, m - 1)
+
+
+def effective_expense(rec, id_map) -> float:
+    amt = float(rec.get("amount") or 0)
+    rb = rec.get("refundedBy")
+    if rb is not None:
+        ref = (id_map or {}).get(rb)
+        if ref:
+            amt = max(0.0, amt - float(ref.get("amount") or 0))
+    return amt
+
+
+def calc_income(recs) -> float:
+    total = 0.0
+    for r in recs or []:
+        if r.get("type") != "income":
+            continue
+        role = role_of(r.get("category"))
+        if role in ("investWithdraw", "saveOut"):
+            continue
+        if role == "refund" and r.get("refundOf") is not None:
+            continue
+        total += float(r.get("amount") or 0)
+    return total
+
+
+def calc_net_expense(recs, id_map) -> float:
+    total = 0.0
+    for r in recs or []:
+        if r.get("type") != "expense":
+            continue
+        if is_non_consume(r.get("category")):
+            continue
+        total += effective_expense(r, id_map)
+    return total
+
 
 @register(
     "astrbot_plugin_xiaoai_ledger",
     "小爱",
     "通过小爱记账的 HTTP 接口在 QQ 里记账、查账、看月度统计（不改动记账本本身）",
-    "1.5.2",
+    "1.6.0",
 )
 class XiaoaiLedgerPlugin(Star):
     def __init__(self, context: Context, config=None):
@@ -495,8 +561,7 @@ class XiaoaiLedgerPlugin(Star):
         msg = ("记好了喵：%s %s %s %s 元%s（#%s）" % (date_str, label, cat_text, money(amount), tail, rid)
                + NL + "要改说 /改 金额，要删说 /改 删。")
         if kind == "expense":
-            spent = await self._month_spent(date_str[:7])
-            warn = await self._budget_warning(date_str[:7], spent)
+            warn = await self._budget_note(date_str[:7])
             if warn:
                 msg += NL + warn
         yield event.plain_result(msg)
@@ -565,9 +630,11 @@ class XiaoaiLedgerPlugin(Star):
             month = "%04d-%02d" % (int(m.group(1)), int(m.group(2)))
         else:
             month = date.today().strftime("%Y-%m")
+
         try:
-            rows = await self._call("GET", "/api/records", params={"month": month})
-            budget = await self._call("GET", "/api/budget")
+            await self._settings()
+            all_recs = await self._call("GET", "/api/records")
+            budgets = await self._call("GET", "/api/budget")
         except LedgerOffline:
             yield event.plain_result("连不上记账本喵，自动启动也没成功（检查程序路径配置）。")
             return
@@ -575,42 +642,42 @@ class XiaoaiLedgerPlugin(Star):
             yield event.plain_result("记账本说：%s" % exc)
             return
 
-        out = inn = 0.0
-        per_cat = {}
-        for r in rows or []:
-            amt = float(r.get("amount") or 0)
-            if r.get("type") == "income":
-                inn += amt
-            else:
-                out += amt
-                key = str(r.get("category") or "其他")
-                per_cat[key] = per_cat.get(key, 0.0) + amt
+        all_recs = all_recs or []
+        recs = [r for r in all_recs if str(r.get("date") or "").startswith(month)]
+        id_map = {r.get("id"): r for r in all_recs}
+        exp = calc_net_expense(recs, id_map)
+        inc = calc_income(recs)
+        bal = inc - exp
 
         lines = ["【%s】" % month,
-                 "支出 %s 元 · 收入 %s 元 · 结余 %s 元" % (money(out), money(inn), money(inn - out))]
-        limit = 0.0
-        if isinstance(budget, dict):
-            raw = budget.get(month) or budget.get("default")
-            try:
-                limit = float(raw) if raw not in (None, "") else 0.0
-            except (TypeError, ValueError):
-                limit = 0.0
-            if month in (budget.get("off") or []):
-                limit = 0.0
-            off_from = budget.get("offFrom") or ""
-            if off_from and month >= str(off_from):
-                limit = 0.0
-        if limit > 0:
-            left = limit - out
-            pct = out / limit * 100 if limit else 0
-            if left >= 0:
-                lines.append("预算 %s 元，已用 %.1f%%，还剩 %s 元" % (money(limit), pct, money(left)))
-            else:
-                lines.append("预算 %s 元，已用 %.1f%%，超支 %s 元" % (money(limit), pct, money(-left)))
+                 "支出 %s · 收入 %s · 结余 %s 元" % (money(exp), money(inc), money(bal))]
+
+        per_cat = {}
+        for r in recs:
+            if r.get("type") != "expense" or is_non_consume(r.get("category")):
+                continue
+            amt = effective_expense(r, id_map)
+            if amt <= 0:
+                continue
+            key = str(r.get("category") or "其他")
+            per_cat[key] = per_cat.get(key, 0.0) + amt
         if per_cat:
             top = sorted(per_cat.items(), key=lambda kv: kv[1], reverse=True)[:5]
             lines.append("花得最多：" + "、".join("%s %s" % (k, money(v)) for k, v in top))
-        if not rows:
+
+        limit = self._effective_budget(month, all_recs, budgets, self._carryover_enabled())
+        if limit is None:
+            lines.append("这个月没有设预算")
+        elif limit <= 0:
+            lines.append("预算 %s 元（含结转），已无可用额度" % money(limit))
+        else:
+            used = self._net_expense_of_month(month, all_recs)
+            left = limit - used
+            tail = ("还剩 " + money(left) + " 元") if left >= 0 else ("超支 " + money(-left) + " 元")
+            lines.append("预算 %s 元（含结转），已用 %.1f%%，%s"
+                         % (money(limit), used / limit * 100, tail))
+
+        if not recs:
             lines.append("这个月还没有记录喵。")
         yield event.plain_result(NL.join(lines))
 
@@ -1217,50 +1284,115 @@ class XiaoaiLedgerPlugin(Star):
         except (TypeError, ValueError):
             return None
 
-    async def _budget_warning(self, month: str, spent: float) -> str:
-        """记完一笔后看预算：超过阈值就返回一句提醒。"""
+    def _carryover_enabled(self) -> bool:
         try:
-            budget = await self._call("GET", "/api/budget")
+            s = self._settings_cache[1] or {}
+            v = s.get("carryover")
+            return True if v is None else bool(v)
+        except Exception:
+            return True
+
+    def _budget_incl_invest_loss(self) -> bool:
+        try:
+            s = self._settings_cache[1] or {}
+            return bool(s.get("budgetInclInvestLoss"))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _budget_of(month, budgets):
+        if not isinstance(budgets, dict):
+            return None
+        if month in (budgets.get("off") or []):
+            return None
+        val = budgets.get(month)
+        if isinstance(val, (int, float)):
+            return float(val)
+        off_from = str(budgets.get("offFrom") or "")
+        if off_from and month >= off_from:
+            return None
+        dflt = budgets.get("default")
+        if isinstance(dflt, (int, float)):
+            return float(dflt)
+        return None
+
+    @staticmethod
+    def _carry_chain_start(month, budgets):
+        resets = [m for m in (budgets.get("reset") or [])
+                  if isinstance(m, str) and len(m) == 7 and m <= month]
+        if resets:
+            return max(resets)
+        off = budgets.get("off") or []
+        keys = [k for k, v in (budgets or {}).items()
+                if isinstance(k, str) and len(k) == 7 and k[4] == "-"
+                and isinstance(v, (int, float)) and k not in off]
+        return min(keys) if keys else None
+
+    @staticmethod
+    def _month_has_records(month, all_recs):
+        for r in all_recs or []:
+            if str(r.get("date") or "").startswith(month):
+                return True
+        return False
+
+    def _net_expense_of_month(self, month, all_recs):
+        recs = [r for r in (all_recs or []) if str(r.get("date") or "").startswith(month)]
+        id_map = {r.get("id"): r for r in (all_recs or [])}
+        total = 0.0
+        for r in recs:
+            if r.get("type") != "expense":
+                continue
+            if is_non_consume(r.get("category")):
+                continue
+            if role_of(r.get("category")) == "investLoss" and not self._budget_incl_invest_loss():
+                continue
+            total += effective_expense(r, id_map)
+        return total
+
+    def _effective_budget(self, month, all_recs, budgets, carryover, depth=0):
+        base = self._budget_of(month, budgets)
+        if base is None:
+            return None
+        if depth > 60:
+            return base
+        start = self._carry_chain_start(month, budgets)
+        if start is not None and month <= start:
+            return base
+        last = prev_month(month)
+        if self._budget_of(last, budgets) is None:
+            return base
+        if not self._month_has_records(last, all_recs):
+            return base
+        if not carryover:
+            return base
+        prev_eff = self._effective_budget(last, all_recs, budgets, carryover, depth + 1)
+        if prev_eff is None:
+            return base
+        return base + (prev_eff - self._net_expense_of_month(last, all_recs))
+
+    async def _budget_note(self, month: str) -> str:
+        try:
+            await self._settings()
+            budgets = await self._call("GET", "/api/budget")
+            all_recs = await self._call("GET", "/api/records")
         except (LedgerOffline, LedgerApiError):
             return ""
-        if not isinstance(budget, dict):
+        limit = self._effective_budget(month, all_recs, budgets, self._carryover_enabled())
+        if limit is None or limit <= 0:
             return ""
-        if month in (budget.get("off") or []):
-            return ""
-        off_from = str(budget.get("offFrom") or "")
-        if off_from and month >= off_from:
-            return ""
-        raw = budget.get(month) or budget.get("default")
-        try:
-            limit = float(raw) if raw not in (None, "") else 0.0
-        except (TypeError, ValueError):
-            return ""
-        if limit <= 0:
-            return ""
-        pct = spent / limit * 100
+        used = self._net_expense_of_month(month, all_recs)
+        pct = used / limit * 100
+        left = limit - used
         try:
             warn_pct = float(self._cfg("budget_warn_pct", 80) or 80)
         except (TypeError, ValueError):
             warn_pct = 80.0
-        left = limit - spent
         if left < 0:
-            return "注意：本月已超支 %s 元（预算 %s，已用 %.0f%%）" % (money(-left), money(limit), pct)
+            return "注意：本月已超支 %s 元（含结转预算 %s，已用 %.0f%%）" % (money(-left), money(limit), pct)
         if pct >= warn_pct:
-            return "提醒：本月预算已用 %.0f%%（%s / %s），还剩 %s 元" % (
-                pct, money(spent), money(limit), money(left))
+            return "提醒：本月预算已用 %.0f%%（%s / %s，含结转），还剩 %s 元" % (
+                pct, money(used), money(limit), money(left))
         return ""
-
-    async def _month_spent(self, month: str) -> float:
-        try:
-            rows = await self._call("GET", "/api/records", params={"month": month})
-        except (LedgerOffline, LedgerApiError):
-            return 0.0
-        total = 0.0
-        for r in rows or []:
-            if r.get("type") == "income":
-                continue
-            total += float(r.get("amount") or 0)
-        return total
 
     # ───────────────────────── 安装记账程序 ─────────────────────────
     def _install_app(self, src_hint: str):
