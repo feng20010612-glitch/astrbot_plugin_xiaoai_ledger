@@ -96,7 +96,7 @@ def today_str() -> str:
     "astrbot_plugin_xiaoai_ledger",
     "小爱",
     "通过小爱记账的 HTTP 接口在 QQ 里记账、查账、看月度统计（不改动记账本本身）",
-    "1.5.1",
+    "1.5.2",
 )
 class XiaoaiLedgerPlugin(Star):
     def __init__(self, context: Context, config=None):
