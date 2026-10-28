@@ -16,7 +16,6 @@ import json
 import os
 import re
 import subprocess
-import tempfile
 import time
 import zipfile
 import urllib.error
@@ -26,7 +25,7 @@ from datetime import date, datetime, timedelta
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star, StarTools, register
 
 DEFAULT_BASE = "http://127.0.0.1:8899"
 HTTP_TIMEOUT = 6
@@ -179,7 +178,7 @@ def calc_net_expense(recs, id_map) -> float:
     "astrbot_plugin_xiaoai_ledger",
     "小爱",
     "通过小爱记账的 HTTP 接口在 QQ 里记账、查账、看月度统计（不改动记账本本身）",
-    "1.8.0",
+    "1.8.1",
 )
 class XiaoaiLedgerPlugin(Star):
     def __init__(self, context: Context, config=None):
@@ -414,31 +413,58 @@ class XiaoaiLedgerPlugin(Star):
             msg = msg + NL + "重启 AstrBot 后生效（skill 在启动时加载）"
         yield event.plain_result(msg)
 
-    def _state_file(self) -> str:
-        base = ""
+    STATE_SUBDIR = "astrbot_plugin_xiaoai_ledger"
+
+    def _state_dir(self) -> str:
+        """AstrBot 规定的持久化目录：data/plugin_data/<插件名>。
+
+        取不到就返回空字符串——调用方据此跳过持久化，绝不再退到临时目录，
+        否则系统清理 temp 后提醒去重、自动启动路径等状态会静默丢失。
+        """
         try:
-            base = str(StarTools.get_data_dir("astrbot_plugin_xiaoai_ledger"))
-        except Exception:
-            base = ""
+            base = str(StarTools.get_data_dir(self.STATE_SUBDIR) or "")
+        except Exception as exc:
+            logger.warning("[xiaoai_ledger] 获取插件数据目录失败: %s", exc)
+            return ""
         if not base:
-            base = os.path.join(tempfile.gettempdir(), "astrbot_plugin_xiaoai_ledger")
-        os.makedirs(base, exist_ok=True)
+            logger.warning("[xiaoai_ledger] 插件数据目录为空，本次运行不持久化状态")
+            return ""
+        try:
+            os.makedirs(base, exist_ok=True)
+        except Exception as exc:
+            logger.warning("[xiaoai_ledger] 创建数据目录失败: %s", exc)
+            return ""
+        return base
+
+    def _state_file(self) -> str:
+        base = self._state_dir()
+        if not base:
+            return ""
         return os.path.join(base, "app_state.json")
 
     def _load_state(self) -> dict:
+        path = self._state_file()
+        if not path:
+            return {}
         try:
-            with open(self._state_file(), "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return data if isinstance(data, dict) else {}
-        except Exception:
+        except FileNotFoundError:
+            return {}
+        except Exception as exc:
+            logger.warning("[xiaoai_ledger] 读取状态失败: %s", exc)
             return {}
 
     def _save_state(self, data: dict) -> None:
+        path = self._state_file()
+        if not path:
+            return
         try:
-            with open(self._state_file(), "w", encoding="utf-8") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as exc:
-            logger.warning("[xiaoai_ledger] 保存安装状态失败: %s", exc)
+            logger.warning("[xiaoai_ledger] 保存状态失败: %s", exc)
 
     def _resolved_exe(self) -> str:
         """配置里的 exe_path 优先，其次上次装好的路径。"""
