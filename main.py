@@ -178,7 +178,7 @@ def calc_net_expense(recs, id_map) -> float:
     "astrbot_plugin_xiaoai_ledger",
     "小爱",
     "通过小爱记账的 HTTP 接口在 QQ 里记账、查账、看月度统计（不改动记账本本身）",
-    "1.8.1",
+    "1.8.2",
 )
 class XiaoaiLedgerPlugin(Star):
     def __init__(self, context: Context, config=None):
@@ -1465,40 +1465,42 @@ class XiaoaiLedgerPlugin(Star):
         if not month:
             month = date.today().strftime("%Y-%m")
         try:
-            rows = await self._call("GET", "/api/records", params={"month": month})
+            # ⚠ 2026-10-28：这里以前只拉当月、且把所有支出直接相加，
+            #   把「投资理财 / 储蓄存款」这类资产搬家也算成花销（618% 那种）。
+            #   改成和 /月 命令、网页一致：净支出（扣退款、不含资产搬家），预算按预算口径。
+            all_rows = await self._call("GET", "/api/records")
+            await self._settings()
             budget = await self._call("GET", "/api/budget")
         except LedgerOffline:
             return "连不上小爱记账，先把记账本打开。"
         except LedgerApiError as exc:
             return "记账本说：%s" % exc
-        out = inn = 0.0
+        all_rows = all_rows or []
+        rows = [r for r in all_rows if str(r.get("date") or "").startswith(month)]
+        id_map = {r.get("id"): r for r in all_rows}
+        out = calc_net_expense(rows, id_map)
+        inn = calc_income(rows)
         per_cat = {}
-        for r in rows or []:
-            amt = float(r.get("amount") or 0)
-            if r.get("type") == "income":
-                inn += amt
-            else:
-                out += amt
-                key = str(r.get("category") or "其他")
-                per_cat[key] = per_cat.get(key, 0.0) + amt
+        for r in rows:
+            if r.get("type") != "expense" or is_non_consume(r.get("category")):
+                continue
+            amt = effective_expense(r, id_map)
+            if amt <= 0:
+                continue
+            key = str(r.get("category") or "其他")
+            per_cat[key] = per_cat.get(key, 0.0) + amt
         lines = ["%s：支出 %s 元，收入 %s 元，结余 %s 元"
                  % (month, money(out), money(inn), money(inn - out))]
-        limit = 0.0
-        if isinstance(budget, dict):
-            raw = budget.get(month) or budget.get("default")
-            try:
-                limit = float(raw) if raw not in (None, "") else 0.0
-            except (TypeError, ValueError):
-                limit = 0.0
-            if month in (budget.get("off") or []):
-                limit = 0.0
-            off_from = budget.get("offFrom") or ""
-            if off_from and month >= str(off_from):
-                limit = 0.0
-        if limit > 0:
-            left = limit - out
-            lines.append("预算 %s 元，已用 %.1f%%，%s"
-                         % (money(limit), out / limit * 100,
+        used = self._net_expense_of_month(month, all_rows)
+        limit = self._effective_budget(month, all_rows, budget, self._carryover_enabled())
+        if limit is None:
+            pass
+        elif limit <= 0:
+            lines.append("预算 %s 元（含结转），已无可用额度" % money(limit))
+        else:
+            left = limit - used
+            lines.append("预算 %s 元（含结转），已用 %.1f%%，%s"
+                         % (money(limit), used / limit * 100,
                             ("还剩 " + money(left) + " 元") if left >= 0 else ("超支 " + money(-left) + " 元")))
         if per_cat:
             top = sorted(per_cat.items(), key=lambda kv: kv[1], reverse=True)[:5]
