@@ -178,7 +178,7 @@ def calc_net_expense(recs, id_map) -> float:
     "astrbot_plugin_xiaoai_ledger",
     "小爱",
     "通过小爱记账的 HTTP 接口在 QQ 里记账、查账、看月度统计（不改动记账本本身）",
-    "1.8.2",
+    "1.8.4",
 )
 class XiaoaiLedgerPlugin(Star):
     def __init__(self, context: Context, config=None):
@@ -304,7 +304,7 @@ class XiaoaiLedgerPlugin(Star):
             flags |= subprocess.DETACHED_PROCESS
         try:
             subprocess.Popen(
-                [exe],
+                [exe, "--no-browser"],
                 cwd=os.path.dirname(exe) or None,
                 env=env,
                 close_fds=True,
@@ -1020,9 +1020,12 @@ class XiaoaiLedgerPlugin(Star):
         task = getattr(self, "_remind_task", None)
         if task is not None:
             task.cancel()
+            # 2026-10-29：cancel 之后 await 抛的是 CancelledError（BaseException 子类），
+            # except Exception 抓不住 → 热重载时 terminate 抛出 → 网页保存配置 500。
+            # 用 gather(return_exceptions=True) 把取消结果当数据收掉。
             try:
-                await task
-            except Exception:
+                await asyncio.gather(task, return_exceptions=True)
+            except BaseException:
                 pass
 
     # ───────────────────────── 改上一笔 ─────────────────────────
