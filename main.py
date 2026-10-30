@@ -1018,15 +1018,26 @@ class XiaoaiLedgerPlugin(Star):
 
     async def terminate(self) -> None:
         task = getattr(self, "_remind_task", None)
-        if task is not None:
-            task.cancel()
-            # 2026-10-29：cancel 之后 await 抛的是 CancelledError（BaseException 子类），
-            # except Exception 抓不住 → 热重载时 terminate 抛出 → 网页保存配置 500。
-            # 用 gather(return_exceptions=True) 把取消结果当数据收掉。
-            try:
-                await asyncio.gather(task, return_exceptions=True)
-            except BaseException:
-                pass
+        self._remind_task = None
+        if task is None:
+            return
+
+        # 2026-10-30：热重载时 terminate 会卡死（日志停在 "Terminating ..."），
+        # 表现是网页保存配置 / 重载插件返回 500。
+        # 原因：提醒任务是旧事件循环里的 task，在新循环里 await 它会永远等不到结果。
+        # 做法：跨循环直接不等待；同循环也只等最多 3 秒，绝不硬等。
+        try:
+            if task.get_loop() is not asyncio.get_running_loop():
+                task.cancel()
+                return
+        except Exception:  # noqa: BLE001
+            pass
+
+        task.cancel()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=3)
+        except BaseException:  # noqa: BLE001 - 取消/超时都不该往外抛
+            pass
 
     # ───────────────────────── 改上一笔 ─────────────────────────
     @filter.command("改")
