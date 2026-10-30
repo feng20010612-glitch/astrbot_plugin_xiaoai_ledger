@@ -178,7 +178,7 @@ def calc_net_expense(recs, id_map) -> float:
     "astrbot_plugin_xiaoai_ledger",
     "小爱",
     "通过小爱记账的 HTTP 接口在 QQ 里记账、查账、看月度统计（不改动记账本本身）",
-    "1.8.4",
+    "1.8.5",
 )
 class XiaoaiLedgerPlugin(Star):
     def __init__(self, context: Context, config=None):
@@ -504,6 +504,37 @@ class XiaoaiLedgerPlugin(Star):
             subs = {}
         return expense, income, subs
 
+    def _no_sub_cats(self):
+        try:
+            st = self._settings_cache[1] or {}
+            v = st.get("noSubCats")
+            return [str(x) for x in v] if isinstance(v, list) else []
+        except Exception:
+            return []
+
+    @staticmethod
+    def _default_sub(cat, subs, text, nosub):
+        """选一个二级：文本里出现的 > 常用别名 > 该分类第一个。"""
+        if not cat or cat in (nosub or []):
+            return ""
+        lst = [str(x) for x in ((subs or {}).get(cat) or [])]
+        if not lst:
+            return ""
+        t = str(text or "")
+        for c in lst:
+            if c and c in t:
+                return c
+        alias = {
+            "早饭": "早餐", "早点": "早餐", "午饭": "午餐", "中饭": "午餐",
+            "晚饭": "晚餐", "宵夜": "夜宵", "夜宵": "夜宵",
+            "打的": "打车", "出租车": "打车", "地铁": "公交地铁", "公交": "公交地铁",
+            "话费": "话费", "流量": "流量", "宽带": "宽带",
+        }
+        for k, v in alias.items():
+            if k in t and v in lst:
+                return v
+        return lst[0]
+
     @staticmethod
     def _guess_category(text, kind, expense, income, subs, fallback):
         pool = [str(c) for c in (expense if kind == "expense" else income)]
@@ -655,11 +686,7 @@ class XiaoaiLedgerPlugin(Star):
         if pool and category not in pool:
             category = pool[0]
         if not sub:
-            for cand in (subs.get(category) or []):
-                cand = str(cand)
-                if cand and cand in (note + " " + text):
-                    sub = cand
-                    break
+            sub = self._default_sub(category, subs, note + " " + text, self._no_sub_cats())
 
         try:
             rec = await self._call(
@@ -1375,6 +1402,8 @@ class XiaoaiLedgerPlugin(Star):
             allowed = [str(x) for x in (subs.get(category) or [])]
             if allowed and sub not in allowed:
                 sub = ""
+        if not sub:
+            sub = self._default_sub(category, subs, note, self._no_sub_cats())
 
         date_str = self._parse_date(date_text) if str(date_text or "").strip() else ""
         if not date_str:
